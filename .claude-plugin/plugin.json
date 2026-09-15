@@ -1,0 +1,9 @@
+{
+  "name": "digico-kontrol",
+  "version": "1.1.0",
+  "displayName": "Digico Kontrol Ajanı",
+  "description": "Yöneticiler için Digico Panel kontrol ajanı: firma ve personel bazında görev içeriklerini, raporları, toplantı ve memnuniyet kayıtlarını okuyup ne yapıldığını kanıtıyla anlatır.",
+  "author": {
+    "name": "Digico Ajans"
+  }
+}

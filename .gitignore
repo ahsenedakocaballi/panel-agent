@@ -1,0 +1,7 @@
+# Oturum anahtarları ve indirilen dosyalar asla repoya girmez
+.digico/
+*.token.json
+indirilenler/
+__pycache__/
+*.pyc
+.env

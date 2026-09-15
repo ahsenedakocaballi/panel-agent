@@ -1,0 +1,14 @@
+{
+  "name": "digico",
+  "description": "Digico Ajans iç araçları: yöneticiler için Digico Panel kontrol ajanı.",
+  "owner": {
+    "name": "Digico Ajans"
+  },
+  "plugins": [
+    {
+      "name": "digico-kontrol",
+      "source": "./",
+      "description": "Yöneticiler için Digico Panel kontrol ajanı (salt okunur)."
+    }
+  ]
+}
