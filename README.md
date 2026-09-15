@@ -24,29 +24,24 @@ Ajan panelde hiçbir şeyi değiştirmez: görev tamamlamaz, not eklemez, bildir
 ## Gereksinimler
 
 1. **Claude masaüstü uygulaması**, Code sekmesi. Ajan uygulamanın yerleşik tarayıcısını kullanır. Terminal sürümünde ise "Claude in Chrome" eklentisi gerekir.
-2. **Git for Windows** (Windows'ta): https://git-scm.com/download/win
+2. **Windows'ta** Git for Windows: https://git-scm.com/download/win · **Mac'te** komut satırı geliştirici araçları (ilk kurulumda Mac kendisi sorar, "Yükle" deyin).
 3. Panelde **yönetici** hesabı.
 
 ## Kurulum
 
-Repo özel (private) olduğu için eklentiyi bir kez terminalden eklemek gerekir.
+Repo herkese açık; GitHub hesabı ya da erişim anahtarı gerekmez.
 
-1. GitHub'da bu repoya erişiminiz olsun. Repo sahibinden davet isteyin.
-2. Bir terminal açın ve eklenti kaynağını ekleyin:
+1. Claude masaüstü uygulamasında **Code** sekmesinde yeni bir sohbet açıp şunu yazın:
+   > Şu Claude Code eklentisini kur: `https://github.com/ahsenedakocaballi/panel-agent.git` marketplace'ini ekle, sonra `digico-kontrol@digico` eklentisini kur.
+
+   Terminal kullanıyorsanız aynı işi şu iki komut yapar:
    ```
    claude plugin marketplace add https://github.com/ahsenedakocaballi/panel-agent.git
-   ```
-   Erişim hatası alırsanız anahtar tanımlayın:
-   1. GitHub'da *Settings → Developer settings → Personal access tokens (classic)* altından `repo` yetkili, süreli bir anahtar oluşturun.
-   2. Anahtarı `GITHUB_TOKEN` ortam değişkenine tanımlayın.
-   3. Komutu tekrarlayın.
-3. Eklentiyi kurun:
-   ```
    claude plugin install digico-kontrol@digico
    ```
-4. Claude uygulamasını yeniden başlatın.
+2. Claude uygulamasını tamamen kapatıp açın (Mac'te ⌘ + Q).
 
-**Güncelleme:** Önce `claude plugin marketplace update digico`, ardından `claude plugin install digico-kontrol@digico` çalıştırın.
+**Güncelleme:** Claude'a "digico-kontrol eklentisini güncelle" yazın ya da `claude plugin marketplace update digico` ve `claude plugin update digico-kontrol@digico` komutlarını çalıştırın. Sonra uygulamayı yeniden başlatın.
 
 ## Kullanım
 
@@ -62,7 +57,7 @@ Repo özel (private) olduğu için eklentiyi bir kez terminalden eklemek gerekir
    > /panel-kontrol Personel A'ya bu ay hangi uyarılar gönderildi?
 2. Ajan paneli tarayıcı panelinde açar. Giriş yapmamışsanız sizden giriş yapmanızı ister.
 3. **Giriş bilgilerinizi tarayıcıdaki panel sayfasına kendiniz girin.** Claude'a sohbet üzerinden şifre yazmayın.
-4. "Giriş yaptım" dediğinizde ajan kayıtları okuyup cevabı yazar.
+4. Giriş yaptıktan sonra sohbete `/panel-kontrol devam` yazın; ajan sorunuza kaldığı yerden devam eder.
 
 Cevaplarda her maddenin kaynağı yazar: hangi kayıt, tarih, kim. Kanıt yoksa "panelde kayıt yok" der. Tamamlandı işaretli ama içeriği boş görevleri ayrıca gösterir.
 
@@ -99,6 +94,7 @@ Sıra önemli değil: panelde yeni dosya yokken ya da parmak izi tutmazken ajan 
 
 ## Bilinmesi gerekenler
 
+- **Hız:** Ajan, uygulamada hangi model seçili olursa olsun işini daha hızlı bir modelle (Claude Sonnet) yapar. Panel yardımcısı birkaç saniyede yüklenir; "personel ne yaptı" gibi sorular tek bir özet çağrısıyla (yaklaşık 5–20 saniye veri toplama) cevaplanır.
 - **Veri Claude'a gider.** Sorduğunuz firma ve personele ait kayıtlar Claude tarafından işlenir. Şirketin KVKK aydınlatma metinlerinde bu kullanımın yer aldığından emin olun.
 - **Raporlar yerele iner.** Okunan raporlar bilgisayarınızda `~/.digico/indirilenler/` klasörüne iner. Bu klasörü paylaşmayın, iş bitince silebilirsiniz.
 - **Firma adı eşleşmesi:** Yönetici görevleri panelde firmaya bağlı değilse ajan onları görev metninde firma adının geçmesinden bulur. Firma farklı bir adla anılmışsa gözden kaçabilir.

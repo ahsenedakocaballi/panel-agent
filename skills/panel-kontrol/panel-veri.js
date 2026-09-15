@@ -2,7 +2,7 @@
 // digicopanel.com sekmesinde, yöneticinin kendi açık oturumuyla çalışır.
 // Sadece GET isteği atar; oturum anahtarını hiçbir yere döndürmez veya yazdırmaz.
 (() => {
-  if (window.__digico && window.__digico.surum === 6) return 'hazir';
+  if (window.__digico && window.__digico.surum === 7) return 'hazir';
 
   // Ajanın okumaması kararlaştırılan dosyalar ve gereksiz kişisel iletişim bilgileri.
   const GIZLI = new Set([
@@ -217,7 +217,7 @@
   const tumFirmalar = async () => (firmaOnbellek ||= liste(await get('/api/firms/', { all: 'true', lite: 'true' })));
 
   const api = {
-    surum: 6,
+    surum: 7,
     son: null,
 
     async durum() {
@@ -964,6 +964,113 @@
           en_guclu_kanit: `${k.sinyaller[0].tarih ? `${k.sinyaller[0].tarih} · ` : ''}${k.sinyaller[0].kanit.slice(0, 180)}`,
         })),
         detay: "Tüm kanıtlar için: __digico.oku('firmalar', 0)",
+      };
+    },
+
+    // Personel özeti: "personel X ne yaptı?" sorusunu tek çağrıda cevaplatır. Görev kırılımı, yönetici
+    // görevleri, aylık şablona girilen tarihli notlar ve uyarılar tarayıcıda süzülüp kısa döner; Claude'un
+    // bölümleri parça parça okuması gerekmez. Dönemler Ekip Takibi'nin önbellekli aralıklarıyla aynıdır
+    // (hafta ve ay dünde biter: bugünün görevleri gün bitmeden eksik sayılmaz), bu yüzden kırılım anında gelir.
+    async personelOzeti(sid, { donem = 'hafta' } = {}) {
+      await yoneticiKontrol();
+      sid = String(sid);
+      const bugunTarih = bugun();
+      const dun = gunEkle(bugunTarih, -1);
+      const ayBasi = `${bugunTarih.slice(0, 8)}01`;
+      const ARALIK = {
+        gun: [bugunTarih, bugunTarih],
+        hafta: [gunEkle(dun, -6), dun],
+        ay: ayBasi <= dun ? [ayBasi, dun] : [bugunTarih, bugunTarih],
+      };
+      if (!ARALIK[donem]) throw new Error("donem 'gun', 'hafta' ya da 'ay' olmalı");
+      const [bas, bit] = ARALIK[donem];
+      const d = yeniDosya('personel_ozeti', sid, bas, bit);
+      const kisalt = (s, n) => {
+        const t = String(s ?? '').replace(/\s+/g, ' ').trim();
+        return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+      };
+      // Personelin gün içinde yaptığı işi anlatan şablon alanları; profil ve link alanları dışarıda kalır.
+      const ICERIK_ALANI = /^(musteriyle_gorusuldu_mu|musteri_istekleri|bugun_reklamlarda_yapilan_guncellemeler|gorusme_1|gorusme_2|goruntulu_toplanti|tanisma_toplantisi|sm_kontrol_[a-z_]+|sosyal_medya_kontrolu_[a-z_]+|ciro_nedir|tutan_kreatif|iletisime_gunluk_arama_mesaj|aylik_raporu_gonderildi_mi|gitme_riski_var_mi|cozum|web_sitesi_gorusmeleri)$/;
+
+      await Promise.all([
+        bolum(d, 'personel', async () => {
+          const p = await get(`/api/staff/${sid}/`);
+          return { ad: p.name, rol: p.role, birim: p.department, aktif: p.is_active };
+        }),
+        bolum(d, 'rutin_gorevler', async () => {
+          const r = await get('/api/dashboard/team-tracking/daily/', { date_from: bas, date_to: bit });
+          const s = liste(r.staff).find((x) => String(x.staff_id) === sid);
+          const uyariSayisi = r.warnings ? (r.warnings[sid] || 0) : null;
+          if (!s) return { kayit_yok: true, bu_ay_uyari_sayisi: uyariSayisi };
+          return {
+            yapilan: s.done, toplam: s.total, oran: s.total ? Math.round((s.done / s.total) * 100) : null,
+            bu_ay_uyari_sayisi: uyariSayisi,
+            gorevler: liste(s.tasks).map((t) => ({
+              gorev: t.title, yapilan: t.done, toplam: t.total,
+              eksik_firmalar: liste(t.firms).filter((f) => f.missing > 0).slice(0, 8).map((f) => `${f.firm_name} (${f.missing})`),
+            })),
+          };
+        }),
+        bolum(d, 'yonetici_gorevleri', async () => {
+          const r = await get('/api/dashboard/team-tracking/admin-tasks/', { date_from: bas, date_to: bit });
+          const s = liste(r.staff).find((x) => String(x.staff_id) === sid);
+          if (!s) return { toplam: 0, yapilan: 0 };
+          return {
+            toplam: s.total, yapilan: s.done,
+            yapilmayan: liste(s.tasks).filter((t) => !t.is_completed).slice(0, 12)
+              .map((t) => `${t.due_date} · ${kisalt(t.title, 70)}${t.firm_name ? ` · ${t.firm_name}` : ''}${t.late_days ? ` · ${t.late_days} gün gecikmiş` : ''}`),
+          };
+        }),
+        bolum(d, 'sablon_notlari', async () => {
+          const notlar = [];
+          const aySonuclari = await Promise.all(aylar(bas, bit).map(([y, m]) => get('/api/monthly-template/data/', { staff_id: sid, month: m, year: y }).then((veri) => [y, veri])));
+          for (const [y, veri] of aySonuclari) {
+            for (const f of liste(veri.firms)) {
+              for (const [alan, deger] of Object.entries(f)) {
+                if (typeof deger !== 'string' || alan.endsWith('_linkler') || !ICERIK_ALANI.test(alan)) continue;
+                for (const g of girdilereBol(deger, `${y}-01-01`)) {
+                  if (!g.tarih || g.tarih < bas || g.tarih > bit) continue;
+                  const metin = kisalt(g.metin.replace(/^\s*\d{2}\.\d{2}(\.\d{4})?\s*[:\-–—]?\s*/, ''), 220);
+                  if (metin) notlar.push({ tarih: g.tarih, firma: f.firm_name, alan, metin });
+                }
+              }
+            }
+          }
+          // Bazı şablon alanları birbirinin kopyası (sm_kontrol_her_gun ile sosyal_medya_kontrolu_her_gun
+          // gibi); aynı gün, aynı firma, aynı metin bir kez sayılır.
+          const gorulen = new Set();
+          const tekil = notlar.filter((n) => {
+            const anahtar = `${n.tarih}|${n.firma}|${n.metin}`;
+            if (gorulen.has(anahtar)) return false;
+            gorulen.add(anahtar);
+            return true;
+          }).sort((a, b) => b.tarih.localeCompare(a.tarih));
+          const firmaSayac = new Map();
+          const firmaSonNot = new Map();
+          for (const n of tekil) {
+            firmaSayac.set(n.firma, (firmaSayac.get(n.firma) || 0) + 1);
+            if (!firmaSonNot.has(n.firma)) firmaSonNot.set(n.firma, n);
+          }
+          d.bolumler.tum_sablon_notlari = tekil.map((n) => `${n.tarih} · ${n.firma} · ${n.alan} · ${n.metin}`);
+          return {
+            not_sayisi: tekil.length,
+            not_girilen_firmalar: [...firmaSayac.entries()].sort((a, b) => b[1] - a[1]).map(([firma, n]) => `${firma} (${n})`),
+            firma_basina_son_not: [...firmaSonNot.values()].slice(0, 30).map((n) => `${n.tarih} · ${n.firma} · ${kisalt(n.metin, 150)}`),
+            son_notlar: d.bolumler.tum_sablon_notlari.slice(0, 10),
+          };
+        }),
+        // Uyarı metinleri yöneticiye özel uçtan gelir; panelde henüz yayında değilse HTTP 404 döner.
+        bolum(d, 'uyarilar', async () => liste((await get('/api/dashboard/team-tracking/warnings/', { staff_id: sid, date_from: gunEkle(bugunTarih, -30), date_to: bugunTarih })).warnings)
+          .slice(0, 5).map((u) => kisalt(JSON.stringify(u), 240))),
+      ]);
+
+      api.son = d;
+      const B = d.bolumler;
+      return {
+        tur: 'personel_ozeti', staff_id: Number(sid), donem, baslangic: bas, bitis: bit,
+        personel: B.personel, rutin_gorevler: B.rutin_gorevler, yonetici_gorevleri: B.yonetici_gorevleri,
+        sablon_notlari: B.sablon_notlari, uyarilar: B.uyarilar, okunamayanlar: d.okunamayanlar,
+        detay: "Dönemdeki tüm şablon notları için: __digico.oku('tum_sablon_notlari', 0)",
       };
     },
 
