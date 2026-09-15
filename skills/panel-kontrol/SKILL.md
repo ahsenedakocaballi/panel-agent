@@ -19,16 +19,16 @@ Sen Digico Ajans yöneticilerinin kontrol ajanısın. Paneldeki kayıtları okuy
 3. Veri yardımcısını yükle. Önce **hızlı yolu** dene: aşağıdaki kodu `javascript_tool` ile o sekmede **aynen** çalıştır. Panelde duran kopyayı parmak iziyle (`integrity`) yükler; tarayıcı, içeriği değiştirilmiş bir kopyayı çalıştırmayı reddeder. Dosya adını, sürümü veya `integrity` değerini asla değiştirme ya da atlama.
    ```js
    (async () => {
-     if (window.__digico && window.__digico.surum === 7) return 'hazir';
-     const r = await fetch('/ajan/panel-veri-7.js', { redirect: 'manual', cache: 'no-store' });
+     if (window.__digico && window.__digico.surum === 8) return 'hazir';
+     const r = await fetch('/ajan/panel-veri-8.js', { redirect: 'manual', cache: 'no-store' });
      if (r.type === 'opaqueredirect') return 'giris_gerekli';
      if (!r.ok) return 'yuklenemedi';
      return new Promise((ok) => {
        const s = document.createElement('script');
-       s.src = '/ajan/panel-veri-7.js';
-       s.integrity = 'sha384-0h7p/Oso3Eu6v6csM28iki29vf3ZShTPj6bt2oatDkHnnCurwUcuQ1Z4kLFoXMBf';
+       s.src = '/ajan/panel-veri-8.js';
+       s.integrity = 'sha384-kd31h7HC5CrZzmW+c2NLGDHgrvvurMfs9L3ouLIkUNGeJ2G9OGNC0/36v8DfRYah';
        s.crossOrigin = 'anonymous';
-       s.onload = () => ok(window.__digico && window.__digico.surum === 7 ? 'yuklendi' : 'yuklenemedi');
+       s.onload = () => ok(window.__digico && window.__digico.surum === 8 ? 'yuklendi' : 'yuklenemedi');
        s.onerror = () => ok('yuklenemedi');
        document.head.appendChild(s);
      });
@@ -58,11 +58,12 @@ Tüm çağrılar `javascript_tool` ile `await __digico.<fonksiyon>(...)` biçimi
 |---|---|
 | `firmaAra('butik')` | Ad veya Instagram kullanıcı adıyla firma arar → `firm_id` |
 | `personelAra('ayse')` | Personel arar → `staff_id` |
-| `firmaDosyasi(974, '2026-09-08', '2026-09-14')` | Firmanın aralıktaki bütün kayıtlarını çeker, bölüm özetini döndürür |
+| `baslat('firmaOzeti', 974)` → `sonuc('firmaOzeti')`; dönem için `baslat('firmaOzeti', 974, { gun: 30 })` (varsayılan son 14 gün, en fazla 62) | **"Firma X için ne yapıldı / ne durumda?" sorusunda önce bunu kullan.** Tek çağrıda kısa özet: kart (durum, beklenti, notlar), sorumlular, son yönetici görevleri ve personel notları, şablona girilen son 15 not ve tarihsiz güncel bilgiler (müşteri istekleri, çözüm, gitme riski), toplantılar, harcama / ciro / ROAS toplamları, reklamın son durumu, memnuniyet aramaları, ödeme kayıtları (arka planda, 5–20 sn) |
+| `firmaDosyasi(974, '2026-09-08', '2026-09-14')` | Firmanın aralıktaki bütün kayıtları (ayrıntı: gün gün reklam durumu, tutan kreatif, web işleri, marka kurulum, pazarlama aramaları). Sadece özet yetmezse kullan; sonra yalnızca ilgili bölümü `oku` |
 | `baslat('personelOzeti', 67)` → `sonuc('personelOzeti')`; dönem için `baslat('personelOzeti', 67, { donem: 'ay' })` (`gun`, `hafta` ya da `ay`; varsayılan `hafta`) | **"Personel ne yaptı?" sorusunda önce bunu kullan.** Tek çağrıda kısa özet: görev türü başına yapılan / toplam ve eksik kalan firmalar, yönetici görevlerinde yapılmayanlar, şablona girilen notlardan firma başına sonuncusu ve en son 10 not, uyarılar (arka planda, 5–20 sn). Hafta ve ay dünde biter; bugünü sormuşsa `gun` kullan |
 | `personelDosyasi(67, '2026-09-01', '2026-09-14')` | Personelin aralıktaki bütün kayıtları (ayrıntı). Sadece özet yetmezse ya da kullanıcı belirli bir ayrıntı sorarsa kullan; sonra yalnızca ilgili bölümü `oku` |
-| `gorevDenetimi()` (son 30 günde verilenler) veya `gorevDenetimi(bas, bit, { personelId: 67 })` | Yönetici görevlerinde kim zamanında yaptı, kim geç yaptı, kim yapmadı, kim okumadı, kim notsuz tamamladı; personel ve görev başlığı bazında |
-| `baslat('gorusmeDenetimi')` (son 30 gün) veya `baslat('gorusmeDenetimi', bas, bit)` → `sonuc('gorusmeDenetimi')` | Tanışma / 1. sesli / 2. sesli / görüntülü görüşmelerde kim yaptı, kim eksik bıraktı, "doldurulmuş ama yapılmamış" olanlar ve ne konuşulduğu (arka planda, 10–40 sn) |
+| `baslat('gorevDenetimi')` → `sonuc('gorevDenetimi')` (son 30 günde verilenler) veya `baslat('gorevDenetimi', bas, bit, { personelId: 67 })` | Yönetici görevlerinde kim zamanında yaptı, kim geç yaptı, kim yapmadı, kim okumadı, kim notsuz tamamladı; personel ve görev başlığı bazında |
+| `baslat('gorusmeDenetimi')` (son 30 gün) veya `baslat('gorusmeDenetimi', bas, bit)` → `sonuc('gorusmeDenetimi')` | Tanışma / 1. sesli / 2. sesli / görüntülü görüşmelerde kim yaptı, kim eksik bıraktı, "doldurulmuş ama yapılmamış" olanlar; `yapilan_son_20` ile yapılan son görüşmelerin kısa notları ve müşteri talepleri (arka planda, 10–20 sn) |
 | `baslat('primDenetimi', { ay: 9, yil: 2026 })` → `sonuc('primDenetimi')` | Reklam prim skorları (baraj, kaybedilen puanlar, eksik adetler, geçen aya göre değişim) ve pazarlama kademeli prim durumu |
 | `riskBaslat()` veya `riskBaslat({ ay: 9, yil: 2026 })` | Tüm aktif firmalarda ayrılma riski taramasını **arka planda** başlatır, hemen döner |
 | `riskSonucu()` | Taramanın durumunu döndürür: `calisiyor` ise birkaç saniye sonra tekrar çağır; `bitti` ise ilk 40 firma, seviyeler ve kapsam gelir |
@@ -73,7 +74,7 @@ Tüm çağrılar `javascript_tool` ile `await __digico.<fonksiyon>(...)` biçimi
 Birden fazla firma veya personel eşleşirse listeyi göster ve hangisi olduğunu sor.
 
 Dosya özetinde `okunamayanlar` doluysa, cevabında o kaynakların okunamadığını mutlaka belirt. **Hız kuralları.** Yönetici hızlı cevap bekliyor; her araç çağrısı süreyi uzatır.
-- Önce özet döndüren fonksiyonları kullan: `personelOzeti`, `gorevDenetimi`, `gorusmeDenetimi`, `primDenetimi`, `riskSonucu`. Çoğu soru bunlardan biriyle cevaplanır.
+- Önce özet döndüren fonksiyonları kullan: `personelOzeti`, `firmaOzeti`, `gorevDenetimi`, `gorusmeDenetimi`, `primDenetimi`, `riskSonucu`. Çoğu soru bunlardan biriyle cevaplanır. Yavaş olabilecekleri (`personelOzeti`, `firmaOzeti`, `gorevDenetimi`, `gorusmeDenetimi`, `primDenetimi`, risk taraması) her zaman `baslat` / `sonuc` ile çalıştır.
 - `oku` ile bölüm okumayı yalnızca özet soruyu cevaplamaya yetmiyorsa ya da kullanıcı belirli bir firma, görev veya not sorarsa yap. İlgili bölümün ilk parçasıyla başla; gerekmedikçe diğer parçalara geçme.
 - Soruyu mümkünse 3–5 araç çağrısında cevapla. Uzun inceleme gerekiyorsa önce kısa cevabı ver, ayrıntıyı kullanıcı isterse aç.
 - `baslat` ile başlattığın işte `sonuc` `calisiyor` dönerse `computer` aracının `wait` eylemiyle birkaç saniye bekleyip tekrar sor; aynı işi yeniden başlatma.
@@ -170,7 +171,7 @@ Rapor, müşteriye giden bir belgedir; panel kayıtları ise personelin iç notl
 
 ## 4a. Yönetici görevleri denetimi ("görevleri kim yaptı, kim yapmadı?")
 
-`gorevDenetimi(bas, bit)` tüm personele atanmış yönetici görevlerini tarar. Tek bir personel için `{ personelId }` ver.
+`baslat('gorevDenetimi', bas, bit)` → `sonuc('gorevDenetimi')` tüm personele atanmış yönetici görevlerini tarar. Tek bir personel için `{ personelId }` ver. Tarih vermeyeceksen `baslat('gorevDenetimi')` yeterli.
 
 **Son 30 günü ve en son verilen görevleri baz al.** Kullanıcı özellikle başka bir dönem sormadıkça tarih verme (`gorevDenetimi()`); görevler **verilme tarihine** göre seçilir ve en son verilenden eskiye sıralanır. Cevaba en son verilen görevlerle başla (`son_verilen_20`: verilme tarihi, personel, görev, durum), sonra personel ve görev bazındaki özete geç. Eski ayların görevlerini yoruma katma. Daha uzun aralık istenirse yalnızca son 31 gün denetlenir ve `kapsam_notu` bunu söyler; cevapta belirt. Devamlı şablonun kendisi sayılmaz; şablonun her gün ürettiği görevler sayılır.
 
@@ -261,7 +262,7 @@ Her planlı görüşmenin durumu:
 Cevaplarken:
 - Önce personel bazında eksik ve sorunlu sayıları ver (`personel_ozeti`).
 - "Doldurulmuş ama yapılmamış" ve "içeriksiz" görüşmeleri tek tek, notundan kısa alıntıyla listele.
-- Yapılan görüşmelerde **ne konuşulduğunu** `oku('gorusmeler', 0)` ile okuyup firma firma kısa özetle: müşterinin talepleri, şikâyetleri, verilen sözler, sonraki adımlar. Aynı notun birden fazla firmaya kopyalandığını görürsen belirt.
+- Yapılan görüşmelerde **ne konuşulduğunu** önce `yapilan_son_20` notlarından firma firma kısa özetle: müşterinin talepleri, şikâyetleri, verilen sözler, sonraki adımlar. Belirli bir firmanın ya da daha eski görüşmelerin içeriği sorulursa `oku('gorusmeler', 0)` ile devam et. Aynı notun birden fazla firmaya kopyalandığını görürsen belirt.
 - Eşleşme plan tarihine ±10 gün içindeki aynı türden kayda göre yapılır; eşleşme bulunamayan işaretli görüşmeyi "yapılmadı" diye değil "kaydı bulunamadı" diye yaz.
 
 ## 4a-3. Prim denetimi ("kim ne durumda, kim yaklaşmış?") ve yöneticiye hızlı aksiyon önerileri
@@ -351,8 +352,8 @@ Aylık şablondaki notlar her gün tekrarlandığı için bir türden sinyal fir
 
 Nasıl kullanılır:
 1. `__digico.riskBaslat()` çalıştır (await gerekmez). Tarama 15–60 saniye sürer; tarayıcı aracının komut süresi sınırlı olduğu için `riskTaramasi()`'nı doğrudan await etme. Ardından `__digico.riskSonucu()` çağır; `durum: 'calisiyor'` dönerse yaklaşık 10 saniye bekleyip (`computer` aracının `wait` eylemiyle) tekrar çağır. `durum: 'bitti'` olduğunda ilk 40 firma, seviye sayıları, `kapsam` ve `okunamayanlar` gelir; `durum: 'hata'` ise hatayı kullanıcıya bildir (`OTURUM_YOK` ise giriş adımına dön).
-2. Tüm kanıtları `oku('firmalar', 0)` (gerekirse sonraki parçalar) ile oku. **Puan tek başına sonuç değildir**; her firmanın sinyal metnini okuyup gerçekten ayrılma sinyali mi, yoksa yanlış eşleşme mi (örneğin başka bir ajanstan ayrılmasından bahsedilmesi) kontrol et. Yanlış eşleşmeleri listeden çıkar ve bunu cevabında belirt.
-3. Yüksek seviyedeki firmalar için gerekiyorsa `firmaDosyasi` ile son 30 günü açıp teyit et.
+2. Kanıtları sonuçtan oku: her firmada `en_guclu_kanit`, yüksek riskli firmalarda ek olarak `diger_kanitlar` var. **Puan tek başına sonuç değildir**; kanıt metnine bakıp gerçekten ayrılma sinyali mi, yoksa yanlış eşleşme mi (örneğin başka bir ajanstan ayrılmasından bahsedilmesi) kontrol et. Yanlış eşleşmeleri listeden çıkar ve bunu cevabında belirt. `oku('firmalar', 0)` yalnızca kullanıcı listedeki bir firmanın tüm sinyallerini sorarsa gerekir.
+3. Firmaları tek tek açma. Kullanıcı bir firmanın ayrıntısını isterse `baslat('firmaOzeti', firm_id, { gun: 30 })` kullan.
 4. Satış düşüşü sadece notlardan okunur; Meta harcama/ciro rakamları taramaya katılmaz, çünkü birçok firma ciroyu panele girmiyor ve "ciro 0" satış olmadığı anlamına gelmiyor. Harcaması olup cirosu hiç görünmeyen bir firmadan şüphelenirsen `firmaDosyasi` ile rakamları ayrıca kontrol et.
 5. `kapsam.sablon_notlari.atlanan` doluysa hangi personelin notlarının taranamadığını yaz. Tarama sadece reklam personelinin seçilen aydaki aylık şablon notlarını kapsar; SM, pazarlama ve yönetici görevleri taranmaz. Kelime tabanlı olduğu için farklı ifade edilmiş riskler kaçmış olabilir.
 
@@ -376,7 +377,7 @@ okunamayan kaynaklar, atlanan personel, elenen yanlış eşleşmeler
 
 Kullanıcı ya da zamanlanmış görev "haftalık rapor" isterse:
 1. Paneli aç, yardımcıyı yükle, `durum()` kontrol et. Girişli değilse raporu hazırlama; sonuç olarak yalnızca "Haftalık rapor hazırlanamadı: panelde oturum yok, lütfen tarayıcıda giriş yapıp raporu tekrar çalıştırın" yaz.
-2. Geçen haftanın pazartesi–pazar aralığı için `gorevDenetimi(bas, bit)`.
+2. Geçen haftanın pazartesi–pazar aralığı için `baslat('gorevDenetimi', bas, bit)` / `sonuc('gorevDenetimi')`.
 3. `riskBaslat()` / `riskSonucu()` ile bu ayın ayrılma riski taraması.
 3a. `baslat('gorusmeDenetimi', <geçen pazartesi>, <geçen pazar>)` / `sonuc('gorusmeDenetimi')` ile geçen haftanın görüşmeleri.
 3b. `baslat('primDenetimi')` / `sonuc('primDenetimi')` ile bu ayın prim durumu.
@@ -402,6 +403,7 @@ Kullanıcı ya da zamanlanmış görev "haftalık rapor" isterse:
 ## 6. Cevap şablonları
 
 ### "Firma X için bu hafta ne yapıldı?"
+`baslat('firmaOzeti', <firm_id>, { gun: 7 })` sonucundan ver; özet yetmezse `firmaDosyasi` ile ilgili bölümü aç.
 ```
 ## <Firma> — <tarih aralığı>
 Sorumlu: … | Durum: … | Okunamayan kaynaklar: … (yoksa bu satırı yazma)

@@ -2,7 +2,7 @@
 // digicopanel.com sekmesinde, yöneticinin kendi açık oturumuyla çalışır.
 // Sadece GET isteği atar; oturum anahtarını hiçbir yere döndürmez veya yazdırmaz.
 (() => {
-  if (window.__digico && window.__digico.surum === 7) return 'hazir';
+  if (window.__digico && window.__digico.surum === 8) return 'hazir';
 
   // Ajanın okumaması kararlaştırılan dosyalar ve gereksiz kişisel iletişim bilgileri.
   const GIZLI = new Set([
@@ -107,6 +107,21 @@
     return v;
   };
 
+  // Not alanları bazen JSON metni olarak saklanıyor ({"notes": ..., "musteriyi_tanimak_sorulari": ...}); düz metne çevir.
+  const metneCevir = (v) => {
+    const t = temizle(v);
+    if (t && typeof t === 'object') {
+      return Object.values(t).flat().map((x) => (x && typeof x === 'object' ? JSON.stringify(x) : String(x))).join(' | ');
+    }
+    return String(t || '');
+  };
+
+  // Metni tek satıra indirip en fazla n karaktere kısaltır (özetlerin kısa kalması için).
+  const kisalt = (s, n) => {
+    const t = String(s ?? '').replace(/\s+/g, ' ').trim();
+    return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+  };
+
   async function sinirli(isler, n = 6) {
     const sonuc = new Array(isler.length);
     let i = 0;
@@ -143,6 +158,9 @@
 
   // Aylık şablonda her gün değişmeyen firma profil alanları (personel dosyasında tekrar etmesin).
   const SABLON_PROFIL = /^(display_order|bulundugu_sehir|sattigi_markalar.*|.*_var_mi|baslangic_takipci_sayisi|firma_baslangic_tarihi|reklam_butcesi|firma_sorumlusu|yedek_sorumlu)$|_(parts|entries|part_counts|missing_reason)$/;
+
+  // Personelin gün içinde yaptığı işi anlatan aylık şablon alanları; profil ve link alanları dışarıda kalır.
+  const SABLON_ICERIK_ALANI = /^(musteriyle_gorusuldu_mu|musteri_istekleri|bugun_reklamlarda_yapilan_guncellemeler|gorusme_1|gorusme_2|goruntulu_toplanti|tanisma_toplantisi|sm_kontrol_[a-z_]+|sosyal_medya_kontrolu_[a-z_]+|ciro_nedir|tutan_kreatif|iletisime_gunluk_arama_mesaj|aylik_raporu_gonderildi_mi|gitme_riski_var_mi|cozum|web_sitesi_gorusmeleri)$/;
 
   // Aylık şablon günlük satırları: metin alanları gün gün birikerek tekrarlanır.
   // Her alan için yalnızca farklı (ve birbirini kapsamayan) metinleri, sayılar için değişen seriyi tutar.
@@ -217,7 +235,7 @@
   const tumFirmalar = async () => (firmaOnbellek ||= liste(await get('/api/firms/', { all: 'true', lite: 'true' })));
 
   const api = {
-    surum: 7,
+    surum: 8,
     son: null,
 
     async durum() {
@@ -359,6 +377,133 @@
       return ozet(d);
     },
 
+    // Firma özeti: "firma X için ne yapıldı?" sorusunu tek çağrıda cevaplatır. Firma kartı, yönetici görevleri,
+    // aylık şablona girilen notlar, toplantılar, harcama ve ciro, reklamın son durumu, memnuniyet ve ödeme
+    // kısaltılmış döner. Seyrek gereken ağır bölümler (gün gün reklam durumu, tutan kreatif, web işleri, marka
+    // kurulum, pazarlama aramaları) özette yoktur; gerekirse firmaDosyasi kullanılır.
+    async firmaOzeti(fid, { gun = 14 } = {}) {
+      await yoneticiKontrol();
+      fid = String(fid);
+      gun = Math.min(Math.max(Number(gun) || 14, 1), 62);
+      const bit = bugun();
+      const bas = gunEkle(bit, -(gun - 1));
+      const d = yeniDosya('firma_ozeti', fid, bas, bit);
+      const B = d.bolumler;
+      // Tarih yazılmadan güncellenen, firmanın o anki durumunu anlatan alanlar.
+      const GUNCEL_ALAN = /^(musteri_istekleri|cozum|gitme_riski_var_mi|gidip_gelen_tarihler)$/;
+
+      await bolum(d, 'firma', () => get(`/api/firms/${fid}/`));
+      const kart = B.firma || {};
+      const ad = norm(kart.name);
+      await bolum(d, 'sorumlular', async () => liste(await get('/api/firm-responsibilities/', { firm: fid })));
+      const sorumluIdleri = [...new Set((B.sorumlular || []).map((r) => r.staff).filter(Boolean).map(String))];
+
+      await Promise.all([
+        // Görev listesinde firma filtresi yok: sorumluların görevlerinden firmaya bağlı olanlar ya da
+        // metninde firma adı geçenler seçilir (firmaDosyasi ile aynı kural).
+        bolum(d, 'yonetici_gorevleri', async () => {
+          const gorulen = new Set();
+          const secilen = [];
+          const listeler = await Promise.all(sorumluIdleri.map((sid) => get('/api/admin-task-assignments/', { assigned_to: sid })));
+          for (const g of listeler.flatMap(liste)) {
+            if (gorulen.has(g.task_assignment_id)) continue;
+            const m = norm([g.title, g.description, g.staff_notes, g.admin_notes].join(' '));
+            if ((String(g.firm) === fid || (ad.length >= 4 && m.includes(ad))) && aralikta(g, bas, bit)) {
+              gorulen.add(g.task_assignment_id);
+              secilen.push(g);
+            }
+          }
+          return secilen
+            .sort((a, b) => String(b.due_date || b.created_at || '').localeCompare(String(a.due_date || a.created_at || '')))
+            .slice(0, 12)
+            .map((g) => `${tarih(g.due_date) || tarih(g.created_at)} · ${kisalt(g.title, 70)} · ${g.assigned_to_name || '-'} · ${g.status}${g.staff_notes ? ` · not: ${kisalt(metneCevir(g.staff_notes), 160)}` : ''}`);
+        }),
+        bolum(d, 'sablon_notlari', async () => {
+          const aySonuclari = await Promise.all(aylar(bas, bit).map(([y, m]) => get('/api/monthly-template/firm-history/', { firm_id: fid, month: m, year: y }).then((r) => [y, liste(r.history)])));
+          const gorulen = new Set();
+          const notlar = [];
+          let sonSatir = null;
+          for (const [y, satirlar] of aySonuclari) {
+            for (const s of satirlar) {
+              if (!sonSatir || String(s.date || '') > String(sonSatir.date || '')) sonSatir = s;
+              for (const [alan, deger] of Object.entries(s)) {
+                if (typeof deger !== 'string' || alan.endsWith('_linkler') || !SABLON_ICERIK_ALANI.test(alan)) continue;
+                for (const g of girdilereBol(deger, `${y}-01-01`)) {
+                  if (!g.tarih || g.tarih < bas || g.tarih > bit) continue;
+                  const not = kisalt(g.metin.replace(/^\s*\d{2}\.\d{2}(\.\d{4})?\s*[:\-–—]?\s*/, ''), 220);
+                  // Günlük satırlar birikmiş metni tekrarlar, bazı alanlar da birbirinin kopyası: gün + metin bir kez sayılır.
+                  const anahtar = `${g.tarih}|${not}`;
+                  if (!not || gorulen.has(anahtar)) continue;
+                  gorulen.add(anahtar);
+                  notlar.push({ tarih: g.tarih, alan, metin: not });
+                }
+              }
+            }
+          }
+          notlar.sort((a, b) => b.tarih.localeCompare(a.tarih));
+          d.bolumler.tum_sablon_notlari = notlar.map((n) => `${n.tarih} · ${n.alan} · ${n.metin}`);
+          const guncel = {};
+          for (const [alan, deger] of Object.entries(sonSatir || {})) {
+            if (typeof deger === 'string' && GUNCEL_ALAN.test(alan) && deger.trim() && !girdilereBol(deger, bas).some((g) => g.tarih)) guncel[alan] = kisalt(deger, 200);
+          }
+          return { not_sayisi: notlar.length, son_notlar: d.bolumler.tum_sablon_notlari.slice(0, 15), guncel_bilgiler: guncel };
+        }),
+        bolum(d, 'toplantilar', async () => liste(await get('/api/meeting-logs/', { firm: fid, meeting_date__gte: bas, meeting_date__lte: bit }))
+          .map((k) => `${tarih(k.meeting_date)} · ${k.meeting_type} · puan ${k.customer_satisfaction_rating ?? '-'} · ${kisalt([metneCevir(k.notes), metneCevir(k.customer_requests)].filter(Boolean).join(' | '), 240)}`)),
+        bolum(d, 'harcama_ve_ciro', async () => {
+          const sayi = (v) => (v == null || v === '' ? null : Number(v));
+          const gunluk = liste(await get('/api/financial-logs/', { firm_id: fid, date__gte: bas, date__lte: bit, include_meta: 'true' }))
+            .map((s) => ({ tarih: tarih(s.date), harcama: sayi(s.daily_spend), ciro: sayi(s.daily_revenue), roas: sayi(s.roas) }))
+            .filter((s) => s.tarih)
+            .sort((a, b) => a.tarih.localeCompare(b.tarih));
+          const harcama = gunluk.reduce((t, s) => t + (s.harcama || 0), 0);
+          const ciro = gunluk.reduce((t, s) => t + (s.ciro || 0), 0);
+          return {
+            gun_sayisi: gunluk.length, toplam_harcama: Math.round(harcama), toplam_ciro: Math.round(ciro),
+            roas: harcama ? Math.round((ciro / harcama) * 100) / 100 : null,
+            son_7_gun: gunluk.slice(-7).map((s) => `${s.tarih}: harcama ${s.harcama ?? '-'} ₺, ciro ${s.ciro ?? '-'} ₺, ROAS ${s.roas ?? '-'}`),
+          };
+        }),
+        bolum(d, 'reklam_son_durum', async () => {
+          const r = await get('/api/reklam-guncelleme/status/', { firm_id: fid, date: bit });
+          return {
+            durum: r.durum_otomatik, dun_harcama: r.dun_harcama, dun_roas: r.dun_roas, hedef_roas: r.hedef_roas,
+            ust_uste_kotu_gun: r.ust_uste_kotu_gun_sayisi, kritik: r.is_kritik, kritik_sebep: r.kritik_sebep,
+            degerlendirme: kisalt(metneCevir(r.degerlendirme), 200), acik_dongu: Boolean(r.open_dongu),
+          };
+        }),
+        bolum(d, 'memnuniyet', async () => {
+          if (!kart.instagram_username) return [];
+          const gunu = (a) => tarih(a.arama_tarihi) || tarih(a.guncel_tarih) || tarih(a.created_at) || '';
+          return liste(await get('/api/accounting/satisfaction-calls/', { instagram: kart.instagram_username }))
+            .sort((a, b) => gunu(b).localeCompare(gunu(a)))
+            .slice(0, 3)
+            .map((a) => `${gunu(a) || '-'} · puan ${a.rating ?? '-'} · genel ${a.genel_memnuniyet ?? '-'} · tavsiye ${a.tavsiye || '-'} · ${kisalt([a.kampanya_yorum, a.rapor, a.notes].filter(Boolean).join(' '), 180)}`);
+        }),
+        bolum(d, 'odeme', async () => {
+          const r = await get(`/api/accounting/payments/${fid}/payment-history/`);
+          const kayitlar = liste((r && (r.payments || r.history)) || r);
+          return { kayit: kayitlar.length, son_kayitlar: kayitlar.slice(-3).map((p) => kisalt(JSON.stringify(temizle(p)), 200)) };
+        }),
+      ]);
+
+      api.son = d;
+      return {
+        tur: 'firma_ozeti', firm_id: Number(fid), baslangic: bas, bitis: bit,
+        kart: {
+          ad: kart.name, durum: kart.status, risk_durumu: kart.risk_status, calismama: kart.calismama_durumu,
+          calismama_neden: kart.calismama_neden ? kisalt(kart.calismama_neden, 200) : undefined,
+          beklenti: kart.beklenti ? kisalt(metneCevir(kart.beklenti), 300) : undefined,
+          notlar: kart.notlar ? kisalt(metneCevir(kart.notlar), 300) : undefined,
+        },
+        sorumlular: (B.sorumlular || []).map((r) => `${r.staff_name || r.staff} (${r.type || '-'})`),
+        yonetici_gorevleri: B.yonetici_gorevleri, sablon_notlari: B.sablon_notlari, toplantilar: B.toplantilar,
+        harcama_ve_ciro: B.harcama_ve_ciro, reklam_son_durum: B.reklam_son_durum, memnuniyet: B.memnuniyet, odeme: B.odeme,
+        okunamayanlar: d.okunamayanlar,
+        detay: "Dönemdeki tüm şablon notları için: __digico.oku('tum_sablon_notlari', 0); daha fazla bölüm için firmaDosyasi",
+      };
+    },
+
     async personelDosyasi(sid, bas, bit) {
       await yoneticiKontrol();
       const d = yeniDosya('personel', sid, bas, bit);
@@ -478,67 +623,71 @@
       const donemler = aylar(bas, bit).map(([y, m]) => `${y}-${String(m).padStart(2, '0')}`);
 
       const sablonOlusma = new Map(); // schedule_id -> şablonun oluşturulduğu gün
-      await bolum(d, 'aktif_devamli_sablonlar', async () => {
-        const sablonlar = liste(await get('/api/admin-task-recurring-schedules/'));
-        for (const s of sablonlar) sablonOlusma.set(String(s.schedule_id), tarih(s.created_at));
-        return sablonlar.filter((s) => s.is_active && (!personelId || String(s.assigned_to) === String(personelId)))
-          .map((s) => ({ baslik: s.title, personel: s.assigned_to_name, atayan: s.assigned_by_name, olusturma: tarih(s.created_at), saat: s.dispatch_time, bitis: s.end_date, son_gonderim: s.last_dispatched_date }));
-      });
-
       const aramaSayisi = new Map(); // "staff|gün" -> o gün yapılan arama
       const listeIlkGun = new Map(); // "staff|YYYY-AA" -> o ayki arama listesinin ilk atandığı gün
       const kuyrukKayitlari = new Map(); // "staff|YYYY-AA" -> [{ eklenme, arandi }]
-      await bolum(d, 'giden_arama_kuyrugu', async () => {
-        let aranan = 0;
-        for (const donem of donemler) {
-          for (const k of liste(await get('/api/churn-callback-queue/', { period: donem }))) {
-            const ilkAnahtar = `${k.staff}|${donem}`;
-            const eklenme = tarih(k.created_at);
-            if (eklenme && (!listeIlkGun.has(ilkAnahtar) || eklenme < listeIlkGun.get(ilkAnahtar))) listeIlkGun.set(ilkAnahtar, eklenme);
-            if (eklenme) {
-              if (!kuyrukKayitlari.has(ilkAnahtar)) kuyrukKayitlari.set(ilkAnahtar, []);
-              kuyrukKayitlari.get(ilkAnahtar).push({ eklenme, arandi: k.is_called ? tarih(k.called_at) : null });
-            }
-            if (!k.is_called || !k.called_at) continue;
-            const gunAnahtar = `${k.staff}|${tarih(k.called_at)}`;
-            aramaSayisi.set(gunAnahtar, (aramaSayisi.get(gunAnahtar) || 0) + 1);
-            aranan += 1;
-          }
-        }
-        return { aranan_kayit: aranan, liste_atanmis_personel_ay: listeIlkGun.size };
-      });
-
       // Hatırlatma görevi olan personelin aylık şablonundaki görüşme kayıtları: "staff|gün" -> kayıt girilen firma.
       // Şablonu okunamayan personel (panel bazı hesaplar için aylık şablon tutmuyor, 403 döner) ayrı işaretlenir;
       // bir kişinin hatası diğerlerinin kayıtlarını düşürmez.
       const sablonKaydi = new Map();
       const sablonOkunamayan = new Set();
       const hatirlatmaPersoneli = [...new Set(secilen.filter((g) => g.recurring_schedule && hatirlatmaMi(g)).map((g) => String(g.assigned_to)))];
-      await bolum(d, 'hatirlatma_sablon_kayitlari', async () => {
-        const hatalar = [];
-        for (const sid of hatirlatmaPersoneli) {
-          try {
-            for (const [y, m] of aylar(bas, bit)) {
-              const veri = await get('/api/monthly-template/data/', { staff_id: sid, month: m, year: y });
-              for (const f of liste(veri.firms)) {
-                const kayitGunleri = new Set();
-                for (const [alan, deger] of Object.entries(f)) {
-                  if (typeof deger !== 'string' || !/musteriyle_gorusuldu_mu|gune_bir|gunde_bir/.test(alan)) continue;
-                  for (const girdi of girdilereBol(deger, `${y}-01-01`)) {
-                    if (girdi.tarih && !/iletisime gecilmedi/.test(norm(girdi.metin))) kayitGunleri.add(girdi.tarih);
-                  }
-                }
-                for (const gun of kayitGunleri) sablonKaydi.set(`${sid}|${gun}`, (sablonKaydi.get(`${sid}|${gun}`) || 0) + 1);
+
+      // Üç kaynak birbirinden bağımsız. Sırayla çekildiklerinde denetim ~40 sn sürüp tarayıcı aracının
+      // süre sınırına dayanıyordu; paralel çekilir, aylık şablonlar da aynı anda en fazla 4 istekle alınır.
+      await Promise.all([
+        bolum(d, 'aktif_devamli_sablonlar', async () => {
+          const sablonlar = liste(await get('/api/admin-task-recurring-schedules/'));
+          for (const s of sablonlar) sablonOlusma.set(String(s.schedule_id), tarih(s.created_at));
+          return sablonlar.filter((s) => s.is_active && (!personelId || String(s.assigned_to) === String(personelId)))
+            .map((s) => ({ baslik: s.title, personel: s.assigned_to_name, atayan: s.assigned_by_name, olusturma: tarih(s.created_at), saat: s.dispatch_time, bitis: s.end_date, son_gonderim: s.last_dispatched_date }));
+        }),
+        bolum(d, 'giden_arama_kuyrugu', async () => {
+          let aranan = 0;
+          const aySonuclari = await Promise.all(donemler.map(async (donem) => [donem, liste(await get('/api/churn-callback-queue/', { period: donem }))]));
+          for (const [donem, kayitlar] of aySonuclari) {
+            for (const k of kayitlar) {
+              const ilkAnahtar = `${k.staff}|${donem}`;
+              const eklenme = tarih(k.created_at);
+              if (eklenme && (!listeIlkGun.has(ilkAnahtar) || eklenme < listeIlkGun.get(ilkAnahtar))) listeIlkGun.set(ilkAnahtar, eklenme);
+              if (eklenme) {
+                if (!kuyrukKayitlari.has(ilkAnahtar)) kuyrukKayitlari.set(ilkAnahtar, []);
+                kuyrukKayitlari.get(ilkAnahtar).push({ eklenme, arandi: k.is_called ? tarih(k.called_at) : null });
               }
+              if (!k.is_called || !k.called_at) continue;
+              const gunAnahtar = `${k.staff}|${tarih(k.called_at)}`;
+              aramaSayisi.set(gunAnahtar, (aramaSayisi.get(gunAnahtar) || 0) + 1);
+              aranan += 1;
             }
-          } catch (e) {
-            if (e.message === 'OTURUM_YOK') throw e;
-            sablonOkunamayan.add(sid);
-            hatalar.push(`${(secilen.find((g) => String(g.assigned_to) === sid) || {}).assigned_to_name || sid}: ${e.message}`);
           }
-        }
-        return { personel: hatirlatmaPersoneli.length, sablonu_okunamayan: hatalar };
-      });
+          return { aranan_kayit: aranan, liste_atanmis_personel_ay: listeIlkGun.size };
+        }),
+        bolum(d, 'hatirlatma_sablon_kayitlari', async () => {
+          const hatalar = [];
+          await sinirli(hatirlatmaPersoneli.map((sid) => async () => {
+            try {
+              const aySonuclari = await Promise.all(aylar(bas, bit).map(async ([y, m]) => [y, await get('/api/monthly-template/data/', { staff_id: sid, month: m, year: y })]));
+              for (const [y, veri] of aySonuclari) {
+                for (const f of liste(veri.firms)) {
+                  const kayitGunleri = new Set();
+                  for (const [alan, deger] of Object.entries(f)) {
+                    if (typeof deger !== 'string' || !/musteriyle_gorusuldu_mu|gune_bir|gunde_bir/.test(alan)) continue;
+                    for (const girdi of girdilereBol(deger, `${y}-01-01`)) {
+                      if (girdi.tarih && !/iletisime gecilmedi/.test(norm(girdi.metin))) kayitGunleri.add(girdi.tarih);
+                    }
+                  }
+                  for (const gun of kayitGunleri) sablonKaydi.set(`${sid}|${gun}`, (sablonKaydi.get(`${sid}|${gun}`) || 0) + 1);
+                }
+              }
+            } catch (e) {
+              if (e.message === 'OTURUM_YOK') throw e;
+              sablonOkunamayan.add(sid);
+              hatalar.push(`${(secilen.find((g) => String(g.assigned_to) === sid) || {}).assigned_to_name || sid}: ${e.message}`);
+            }
+          }), 4);
+          return { personel: hatirlatmaPersoneli.length, sablonu_okunamayan: hatalar };
+        }),
+      ]);
 
       const degerlendir = (g, durum) => {
         const gun = tarih(g.due_date) || tarih(g.created_at);
@@ -794,10 +943,11 @@
         });
       }
 
-      await bolum(d, 'muhasebe_durumlari', async () => {
+      // Dört kaynak birbirinden bağımsız; sırayla çekmek taramayı uzatıyordu. İşler burada başlar, aşağıda birlikte beklenir.
+      const muhasebeIsi = bolum(d, 'muhasebe_durumlari', async () => {
         const sayilar = {};
-        for (const [yy, aa] of [[oncekiYil, oncekiAy], [yil, ay]]) {
-          const odemeler = liste((await get('/api/accounting/payments/all-firms-table/', { month: aa, year: yy })).payments);
+        const aylikOdemeler = await Promise.all([[oncekiYil, oncekiAy], [yil, ay]].map(async ([yy, aa]) => [yy, aa, liste((await get('/api/accounting/payments/all-firms-table/', { month: aa, year: yy })).payments)]));
+        for (const [yy, aa, odemeler] of aylikOdemeler) {
           sayilar[`${yy}-${aa}`] = odemeler.reduce((m, s) => { const k = s.firm_status || '-'; m[k] = (m[k] || 0) + 1; return m; }, {});
           for (const s of odemeler) {
             const id = s.firm != null ? String(s.firm) : adaGoreBul(s.firm_name);
@@ -817,7 +967,7 @@
         return sayilar;
       });
 
-      await bolum(d, 'gelir_riski', async () => {
+      const gelirIsi = bolum(d, 'gelir_riski', async () => {
         const r = await get('/api/dashboard/revenue-risk/');
         let listelenen = 0;
         for (const s of liste(r.staff)) {
@@ -836,10 +986,10 @@
         return { sayilar: r.counts, listelenen };
       });
 
-      await bolum(d, 'memnuniyet_aramalari', async () => {
+      const memnuniyetIsi = bolum(d, 'memnuniyet_aramalari', async () => {
         let taranan = 0;
-        for (const [yy, aa] of [[oncekiYil, oncekiAy], [yil, ay]]) {
-          const aramalar = liste(await get('/api/accounting/satisfaction-calls/', { month: aa, year: yy }));
+        const aylikAramalar = await Promise.all([[oncekiYil, oncekiAy], [yil, ay]].map(async ([yy, aa]) => liste(await get('/api/accounting/satisfaction-calls/', { month: aa, year: yy }))));
+        for (const aramalar of aylikAramalar) {
           taranan += aramalar.length;
           for (const a of aramalar) {
             const yorum = [a.kampanya_yorum, a.rapor, a.notes].filter(Boolean).join(' ').trim();
@@ -876,7 +1026,7 @@
       const SM_DESENI = { tur: 'surec_durdu', agirlik: 3, re: /surec durduruldu|musteri ayrildi|calismayi birakt/ };
       const ONCEKI_AJANS = /onceki (ajans|calistig)|daha once(si(nde)?)? .{0,40}ajans|eski ajans|baska (bir )?ajans(la|tan)|ajans(i)?(y)?la calis(ildi|mis|ma beklentisi)|ajans tarafindan .{0,60}vaat/;
 
-      await bolum(d, 'sablon_notlari', async () => {
+      const sablonIsi = bolum(d, 'sablon_notlari', async () => {
         const personel = liste(await get('/api/staff/')).filter((s) => /reklam/.test(norm(`${s.role} ${s.department}`)) && s.is_active !== false);
         const taranan = [];
         const atlanan = [];
@@ -916,9 +1066,10 @@
               }
             }
           }
-        }), 4);
+        }), 6);
         return { taranan_personel: taranan, atlanan };
       });
+      await Promise.all([muhasebeIsi, gelirIsi, memnuniyetIsi, sablonIsi]);
 
       const PUAN_SINIRI = { acik_ayrilma: 2, reklam_durdurma: 2, memnuniyetsizlik: 2, satis_dusus: 2, satis_yok: 3, memnuniyet_olumsuz: 2 };
       const firmaListesi = [...risk.values()].map((k) => {
@@ -962,8 +1113,10 @@
           firm_id: k.firm_id, firma: k.firma, sorumlu: k.sorumlu, skor: k.skor, seviye: k.seviye,
           sinyaller: [...new Set(k.sinyaller.map((s) => s.tur))].join(', '),
           en_guclu_kanit: `${k.sinyaller[0].tarih ? `${k.sinyaller[0].tarih} · ` : ''}${k.sinyaller[0].kanit.slice(0, 180)}`,
+          // Yüksek riskli firmalar için kanıtları ayrıca okumaya gerek kalmasın diye iki kanıt daha.
+          ...(k.seviye === 'yuksek' ? { diger_kanitlar: k.sinyaller.slice(1, 3).map((s) => `${s.tarih ? `${s.tarih} · ` : ''}${s.tur}: ${kisalt(s.kanit, 180)}`) } : {}),
         })),
-        detay: "Tüm kanıtlar için: __digico.oku('firmalar', 0)",
+        detay: "Yüksek riskli firmaların 3 kanıtı yukarıda; tüm kanıtlar gerekirse: __digico.oku('firmalar', 0)",
       };
     },
 
@@ -985,12 +1138,6 @@
       if (!ARALIK[donem]) throw new Error("donem 'gun', 'hafta' ya da 'ay' olmalı");
       const [bas, bit] = ARALIK[donem];
       const d = yeniDosya('personel_ozeti', sid, bas, bit);
-      const kisalt = (s, n) => {
-        const t = String(s ?? '').replace(/\s+/g, ' ').trim();
-        return t.length > n ? `${t.slice(0, n - 1)}…` : t;
-      };
-      // Personelin gün içinde yaptığı işi anlatan şablon alanları; profil ve link alanları dışarıda kalır.
-      const ICERIK_ALANI = /^(musteriyle_gorusuldu_mu|musteri_istekleri|bugun_reklamlarda_yapilan_guncellemeler|gorusme_1|gorusme_2|goruntulu_toplanti|tanisma_toplantisi|sm_kontrol_[a-z_]+|sosyal_medya_kontrolu_[a-z_]+|ciro_nedir|tutan_kreatif|iletisime_gunluk_arama_mesaj|aylik_raporu_gonderildi_mi|gitme_riski_var_mi|cozum|web_sitesi_gorusmeleri)$/;
 
       await Promise.all([
         bolum(d, 'personel', async () => {
@@ -1027,7 +1174,7 @@
           for (const [y, veri] of aySonuclari) {
             for (const f of liste(veri.firms)) {
               for (const [alan, deger] of Object.entries(f)) {
-                if (typeof deger !== 'string' || alan.endsWith('_linkler') || !ICERIK_ALANI.test(alan)) continue;
+                if (typeof deger !== 'string' || alan.endsWith('_linkler') || !SABLON_ICERIK_ALANI.test(alan)) continue;
                 for (const g of girdilereBol(deger, `${y}-01-01`)) {
                   if (!g.tarih || g.tarih < bas || g.tarih > bit) continue;
                   const metin = kisalt(g.metin.replace(/^\s*\d{2}\.\d{2}(\.\d{4})?\s*[:\-–—]?\s*/, ''), 220);
@@ -1142,36 +1289,27 @@
         for (const m of metin.matchAll(new RegExp(re.source, 'g'))) son = m.index;
         return son;
       };
-      // Tanışma notları JSON olarak saklanabiliyor ({"notes": ..., "musteriyi_tanimak_sorulari": ...}); düz metne çevir.
-      const metneCevir = (v) => {
-        const t = temizle(v);
-        if (t && typeof t === 'object') {
-          return Object.values(t).flat().map((x) => (x && typeof x === 'object' ? JSON.stringify(x) : String(x))).join(' | ');
-        }
-        return String(t || '');
-      };
-
       const planSatirlari = [];
-      await bolum(d, 'plan', async () => {
-        for (const [y, m] of aylar(bas, bit)) {
-          const r = await get('/api/firm-tasks/meeting-report-schedule/', { year: y, month: m, scope: 'all' });
-          planSatirlari.push(...liste(r.rows));
-        }
-        return { firma_satiri: planSatirlari.length };
-      });
-
       const kayitlar = [];
-      await bolum(d, 'toplanti_kayitlari_ozet', async () => {
-        const kBas = gunEkle(bas, -7);
-        const kBit = gunEkle(bit, 7) < bugunTarih ? gunEkle(bit, 7) : bugunTarih;
-        kayitlar.push(...liste(await get('/api/meeting-logs/', { meeting_date__gte: kBas, meeting_date__lte: kBit })));
-        return { kayit: kayitlar.length, aralik: `${kBas} – ${kBit}` };
-      });
       const personelAdi = new Map();
-      await bolum(d, 'personel_listesi', async () => {
-        for (const s of liste(await get('/api/staff/'))) personelAdi.set(String(s.staff_id), s.name);
-        return { personel: personelAdi.size };
-      });
+      // Plan, toplantı kayıtları ve personel listesi birbirinden bağımsız; paralel çekilir.
+      await Promise.all([
+        bolum(d, 'plan', async () => {
+          const aySonuclari = await Promise.all(aylar(bas, bit).map(([y, m]) => get('/api/firm-tasks/meeting-report-schedule/', { year: y, month: m, scope: 'all' })));
+          for (const r of aySonuclari) planSatirlari.push(...liste(r.rows));
+          return { firma_satiri: planSatirlari.length };
+        }),
+        bolum(d, 'toplanti_kayitlari_ozet', async () => {
+          const kBas = gunEkle(bas, -7);
+          const kBit = gunEkle(bit, 7) < bugunTarih ? gunEkle(bit, 7) : bugunTarih;
+          kayitlar.push(...liste(await get('/api/meeting-logs/', { meeting_date__gte: kBas, meeting_date__lte: kBit })));
+          return { kayit: kayitlar.length, aralik: `${kBas} – ${kBit}` };
+        }),
+        bolum(d, 'personel_listesi', async () => {
+          for (const s of liste(await get('/api/staff/'))) personelAdi.set(String(s.staff_id), s.name);
+          return { personel: personelAdi.size };
+        }),
+      ]);
 
       const kayitIndeksi = new Map(); // firm|tur -> [kayıt]
       for (const k of kayitlar) {
@@ -1256,8 +1394,13 @@
         personel_ozeti: personelOzeti,
         sorunlu_ilk_25: gorusmeler.filter((g) => SORUNLU.includes(g.durum))
           .slice(0, 25).map((g) => `${g.durum} · ${g.firma} · ${g.gorusme} · plan ${g.plan_tarihi} · ${g.sorumlu}${g.not ? ` · not: "${g.not.slice(0, 120)}"` : ''}`),
+        // "Ne konuşuldu?" sorusu çoğu zaman bu kısa notlarla cevaplanır; tüm görüşmeleri okumak gerekmez.
+        yapilan_son_20: gorusmeler.filter((g) => g.durum === 'yapildi' || g.durum === 'kayit_var_isaret_yok')
+          .sort((a, b) => String(b.kayit_tarihi || b.plan_tarihi).localeCompare(String(a.kayit_tarihi || a.plan_tarihi)))
+          .slice(0, 20)
+          .map((g) => `${g.kayit_tarihi || g.plan_tarihi} · ${g.firma} · ${g.gorusme} · ${g.sorumlu}${g.musteri_talepleri ? ` · talep: ${kisalt(g.musteri_talepleri, 100)}` : ''}${g.not ? ` · not: ${kisalt(g.not, 180)}` : ''}`),
         okunamayanlar: d.okunamayanlar,
-        detay: "Görüşme görüşme içerik için: __digico.oku('gorusmeler', 0)",
+        detay: "Tüm görüşmelerin içeriği için: __digico.oku('gorusmeler', 0)",
       };
     },
 

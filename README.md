@@ -94,7 +94,7 @@ Sıra önemli değil: panelde yeni dosya yokken ya da parmak izi tutmazken ajan 
 
 ## Bilinmesi gerekenler
 
-- **Hız:** Ajan, uygulamada hangi model seçili olursa olsun işini daha hızlı bir modelle (Claude Sonnet) yapar. Panel yardımcısı birkaç saniyede yüklenir; "personel ne yaptı" gibi sorular tek bir özet çağrısıyla (yaklaşık 5–20 saniye veri toplama) cevaplanır.
+- **Hız:** Ajan, uygulamada hangi model seçili olursa olsun işini daha hızlı bir modelle (Claude Sonnet) yapar. Panel yardımcısı birkaç saniyede yüklenir; "personel ne yaptı" ve "firmada ne yapıldı" gibi sorular tek bir özet çağrısıyla (genellikle birkaç saniye, en fazla ~20 saniye veri toplama) cevaplanır.
 - **Veri Claude'a gider.** Sorduğunuz firma ve personele ait kayıtlar Claude tarafından işlenir. Şirketin KVKK aydınlatma metinlerinde bu kullanımın yer aldığından emin olun.
 - **Raporlar yerele iner.** Okunan raporlar bilgisayarınızda `~/.digico/indirilenler/` klasörüne iner. Bu klasörü paylaşmayın, iş bitince silebilirsiniz.
 - **Firma adı eşleşmesi:** Yönetici görevleri panelde firmaya bağlı değilse ajan onları görev metninde firma adının geçmesinden bulur. Firma farklı bir adla anılmışsa gözden kaçabilir.
